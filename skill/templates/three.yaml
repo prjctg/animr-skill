@@ -1,0 +1,98 @@
+"t": |-
+  c
+"j": |
+  import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.179.1/build/three.module.js';
+  import { createThreeStage } from 'https://cdn.jsdelivr.net/gh/prjctg/g-lib@1.3.0/index.js';
+
+  /*
+   * __NAME__: <one line: the picture, concrete and physical>
+   *
+   * 1. The scene is a PURE FUNCTION OF TIME. poseAt() maps (plan, t) to the object's scale and
+   *    angle, so SEEK is just render(G.currentTime()) and nothing needs wiping.
+   * 2. createThreeStage owns renderer, DPR clamp, resize and teardown (geometries, materials,
+   *    textures, renderer, GL context), released through G.dispose.
+   *
+   * Not done on purpose: <thing>, because <reason>.
+   */
+
+  export const DEFAULTS = { fadeMs: 150, sizeRatio: 0.14 };
+
+  /** 0..1 visibility of [s, e] at time t with a symmetric fade. Pure and continuous. */
+  export function envelope(t, s, e, fadeMs) {
+    if (!(fadeMs > 0)) return t >= s && t <= e ? 1 : 0;
+    if (t < s - fadeMs || t > e + fadeMs) return 0;
+    if (t < s) return (t - (s - fadeMs)) / fadeMs;
+    if (t > e) return 1 - (t - e) / fadeMs;
+    return 1;
+  }
+
+  /** Time ranges only; geometry belongs to the browser half. */
+  export function buildPlan(syls) {
+    return syls.map((syl) => ({ id: syl.id, s: syl.s, e: syl.e }));
+  }
+
+  /** Scale and angle of the object at time t. Deterministic. */
+  export function poseAt(plan, t, cfg) {
+    let a = 0;
+    for (const item of plan) a = Math.max(a, envelope(t, item.s, item.e, cfg.fadeMs));
+    return { scale: 0.2 + a * cfg.sizeRatio * 6, angleY: t / 1000 };
+  }
+
+  /* Browser half. Everything above this line is DOM-free on purpose. */
+  export default function (G, shadowRoot, config) {
+    const cfg = G.cfg(config, {
+      channel: G.cfg.int(0),
+      fadeMs: G.cfg.num(DEFAULTS.fadeMs, 0, 2000),
+      sizeRatio: G.cfg.num(DEFAULTS.sizeRatio, 0.02, 0.5),
+    });
+    const canvas = G.getElementById('c');
+    if (!canvas) return;
+
+    const stage = createThreeStage(THREE, G, { canvas, fov: 50, maxDpr: 2 });
+    G.dispose(stage.dispose);   // frees geometries, materials, textures, renderer and the GL context
+    stage.camera.position.z = 6;
+    const box = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshNormalMaterial());
+    stage.scene.add(box);
+
+    let ready = false;   // song data exists only after INIT
+    let plan = null;
+
+    G.on(G.TYPE.INIT, () => { ready = true; plan = null; });
+    G.on(G.TYPE.RESIZE, () => { stage.resize(); });
+
+    const render = (t) => {
+      if (!ready) return;
+      if (!plan) plan = buildPlan(G.map(G.TYPE.SYL, { channel: cfg.channel }));
+      const pose = poseAt(plan, t, cfg);
+      box.scale.setScalar(pose.scale);
+      box.rotation.y = pose.angleY;
+      stage.render();
+    };
+    G.on(G.TYPE.TICK, render);                            // playback; onFrame covers SEEK/PLAY/PAUSE/RESIZE
+    G.onFrame({ render, reset() { plan = null; ready = false; } });
+  }
+
+  export const c = {
+    v: { fadeMs: 150, sizeRatio: 0.14 },
+    m: [
+      { s: 'fadeMs', t: 'fadeMs' },
+      { s: 'sizeRatio', t: 'sizeRatio' },
+    ],
+  };
+
+  export const cSchema = [
+    { i: 'fadeMs', n: 'Fade (ms)', t: 'int', mn: 0, mx: 2000 },
+    { i: 'sizeRatio', n: 'Size', t: 'number', mn: 0.02, mx: 0.5 },
+  ];
+"s": |
+  :host {
+    display: block;
+    --paper: var(--paperColor, #ffffff);
+    background: var(--paper);
+  }
+  [data-bs-theme=dark] {
+    --paper: var(--paperColor, #101014);
+  }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+"h": |
+  <canvas id="c"></canvas>

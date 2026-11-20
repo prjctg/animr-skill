@@ -1,0 +1,26 @@
+{
+  "name": "animr-skill",
+  "version": "0.1.0",
+  "private": false,
+  "description": "A model-agnostic skill, spec, validator and preview harness for authoring music/lyric-synced animation modules (YAML).",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "new": "node tools/new.mjs",
+    "validate": "node tools/validate.mjs",
+    "check": "node tools/check.mjs",
+    "preview": "node tools/preview.mjs",
+    "bundle": "node tools/bundle.mjs",
+    "scan": "node tools/scan.mjs",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "acorn": "^8.12.1",
+    "yaml": "^2.5.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0",
+    "vitest": "^2.1.0"
+  }
+}

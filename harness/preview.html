@@ -1,0 +1,130 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>anim preview</title>
+<style>
+  :root { --bg: #f4f4f5; --fg: #18181b; --line: #d4d4d8; --accent: #2563eb; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #18181b; --fg: #e4e4e7; --line: #3f3f46; --accent: #60a5fa; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, sans-serif; display: grid; grid-template-rows: auto 1fr auto; height: 100vh; }
+  header, footer { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--line); }
+  footer { border-top: 1px solid var(--line); border-bottom: 0; }
+  select, button, input[type=text], input[type=number] { font: inherit; color: inherit; background: transparent; border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  label { display: inline-flex; gap: 6px; align-items: center; }
+  main { display: grid; grid-template-columns: 1fr 240px; min-height: 0; }
+  #stage { overflow: auto; display: flex; justify-content: center; align-items: center; padding: 14px; background: repeating-conic-gradient(#8881 0 25%, transparent 0 50%) 0 0 / 20px 20px; }
+  #opts { border-left: 1px solid var(--line); padding: 10px 14px; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
+  #opts h2 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; opacity: .7; }
+  #opts label { display: flex; justify-content: space-between; gap: 8px; }
+  #opts input[type=text], #opts input[type=number], #opts select { width: 110px; }
+  #scrub { flex: 1 1 240px; }
+  #msg { color: #dc2626; white-space: pre-wrap; flex-basis: 100%; }
+  #time { font-variant-numeric: tabular-nums; min-width: 8ch; }
+  @media (max-width: 700px) { main { grid-template-columns: 1fr; } #opts { border-left: 0; border-top: 1px solid var(--line); } }
+</style>
+<header>
+  <label>module <select id="mod"></select></label>
+  <label>song <select id="song"></select></label>
+  <label>size <select id="size">
+    <option value="420x740">phone 420x740</option><option value="1280x720" selected>laptop 1280x720</option><option value="640x360">small 640x360</option>
+  </select></label>
+  <label>theme <select id="theme"><option>light</option><option>dark</option></select></label>
+  <button id="reload">reload</button>
+  <span id="msg"></span>
+</header>
+<main>
+  <div id="stage"></div>
+  <aside id="opts"><h2>options</h2><div id="optlist"></div></aside>
+</main>
+<footer>
+  <button id="play">play</button>
+  <input id="scrub" type="range" min="0" max="16000" value="0" step="10">
+  <span id="time">0 ms</span>
+</footer>
+<script type="module">
+  import { mount } from './g-mock.js';
+  import { SONGS, SONG_NAMES } from './fixtures.js';
+  const $ = (id) => document.getElementById(id);
+  const q = new URLSearchParams(location.search);
+  let anim = null; let schema = []; let mappings = []; let overrides = {}; let playing = false; let last = 0; let current = null;
+
+  for (const n of SONG_NAMES) $('song').add(new Option(n, n));
+  const list = await (await fetch('/__list')).json();
+  for (const f of list) $('mod').add(new Option(f, f));
+  if (q.get('src') && !list.includes(q.get('src'))) $('mod').add(new Option(q.get('src'), q.get('src')));
+  if (q.get('src')) $('mod').value = q.get('src');
+
+  const say = (m) => { $('msg').textContent = m || ''; };
+  window.addEventListener('error', (e) => say(String(e.message)));
+  const origError = console.error;
+  console.error = (...a) => { say(a.map(String).join(' ').slice(0, 400)); origError(...a); };
+
+  async function load(keepTime) {
+    const t = keepTime && anim ? anim.time() : 0;
+    playing = false; $('play').textContent = 'play';
+    if (anim) { anim.uninit(); anim.destroy(); anim = null; }
+    $('stage').textContent = '';
+    say('');
+    const file = $('mod').value;
+    const res = await fetch('/__module?file=' + encodeURIComponent(file));
+    if (!res.ok) { say(await res.text()); return; }
+    const { js, css, html } = await res.json();
+    const [w, h] = $('size').value.split('x').map(Number);
+    const song = SONGS[$('song').value]();
+    $('scrub').max = song.songData.duration;
+    if (file !== current) { overrides = {}; current = file; }
+    const config = {};
+    for (const [k, v] of Object.entries(overrides)) config[mappings.find((m) => m.s === k)?.t ?? k] = v;
+    try {
+      anim = await mount({ js, css, html, song, config, size: [w, h], theme: $('theme').value, container: $('stage') });
+    } catch (e) { say(String(e.message || e)); return; }
+    if (file !== window.__optsFor) buildOptions();
+    anim.seek(t);
+    $('scrub').value = t; $('time').textContent = Math.round(t) + ' ms';
+  }
+
+  function buildOptions() {
+    window.__optsFor = $('mod').value;
+    const box = $('optlist'); box.textContent = '';
+    schema = anim.mod.cSchema || []; mappings = anim.mod.c?.m || [];
+    const defaults = anim.mod.c?.v || {};
+    if (!schema.length) { box.textContent = 'this module has no options'; return; }
+    for (const p of schema) {
+      const local = mappings.find((m) => m.s === p.i)?.t;
+      const label = document.createElement('label'); label.append(p.n || p.i);
+      let input;
+      if (p.t === 'select') { input = document.createElement('select'); for (const [v, n] of p.o || []) input.add(new Option(n, v)); }
+      else if (p.t === 'check' || p.t === 'boolean') { input = document.createElement('input'); input.type = 'checkbox'; }
+      else if (p.t === 'color') { input = document.createElement('input'); input.type = 'color'; }
+      else if (['int', 'number', 'channel', 'mchannel', 'tchannel'].includes(p.t)) { input = document.createElement('input'); input.type = 'number'; if (p.mn != null) input.min = p.mn; if (p.mx != null) input.max = p.mx; input.step = p.t === 'number' ? 'any' : 1; }
+      else { input = document.createElement('input'); input.type = 'text'; }
+      const d = defaults[local] ?? p.d;
+      if (input.type === 'checkbox') input.checked = !!d; else if (d != null) input.value = d;
+      input.onchange = () => {
+        const v = input.type === 'checkbox' ? input.checked : input.type === 'number' ? Number(input.value) : input.value;
+        overrides[p.i] = v; load(true);
+      };
+      label.append(input); box.append(label);
+    }
+  }
+
+  function loop(now) {
+    if (playing && anim) {
+      const dt = Math.min(100, now - last);
+      const to = Math.min(+$('scrub').max, anim.time() + dt);
+      anim.playTo(to, 16);
+      $('scrub').value = to; $('time').textContent = Math.round(to) + ' ms';
+      if (to >= +$('scrub').max) { playing = false; $('play').textContent = 'play'; }
+    }
+    last = now; requestAnimationFrame(loop);
+  }
+  $('play').onclick = () => { if (!anim) return; playing = !playing; $('play').textContent = playing ? 'pause' : 'play'; if (!playing) anim.pause(); };
+  $('scrub').oninput = () => { if (!anim) return; playing = false; $('play').textContent = 'play'; anim.seek(+$('scrub').value); $('time').textContent = $('scrub').value + ' ms'; };
+  $('reload').onclick = () => load(false);
+  for (const id of ['mod', 'song', 'size']) $(id).onchange = () => load(false);
+  $('theme').onchange = () => load(true);
+  requestAnimationFrame(loop);
+  load(false);
+</script>

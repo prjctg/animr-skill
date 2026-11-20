@@ -1,0 +1,11 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>anim harness page</title>
+<body>
+<script type="module">
+  import { mount, sleep, nextFrame } from '/harness/g-mock.js';
+  window.__mount = mount;
+  window.__sleep = sleep;
+  window.__nextFrame = nextFrame;
+  window.__ready = true;
+</script>
